@@ -1,0 +1,22 @@
+{
+  "buildCommand": "echo 'No build needed'",
+  "outputDirectory": ".",
+  "functions": {
+    "api/mcp.ts": {
+      "maxDuration": 30
+    }
+  },
+  "alias": [
+    "remote-mcp-server-with-auth.vercel.app"
+  ],
+  "rewrites": [
+    {
+      "source": "/mcp",
+      "destination": "/api/mcp"
+    },
+    {
+      "source": "/stream",
+      "destination": "/api/mcp"
+    }
+  ]
+}
