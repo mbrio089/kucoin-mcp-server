@@ -1,189 +1,200 @@
 # KuCoin Futures MCP Server
 
-Ein Model Context Protocol (MCP) Server für die KuCoin Futures API mit GitHub OAuth-Authentifizierung.
+A Model Context Protocol (MCP) Server for the KuCoin Futures API with header-based authentication, deployed on Vercel Edge Functions.
 
 ## 🚀 Features
 
-### Market Data Tools
-- `getSymbols` - Alle verfügbaren Futures-Handelssymbole abrufen
-- `getTicker` - Ticker-Informationen für spezifische oder alle Symbole
-- `getOrderBook` - Order-Book-Daten mit konfigurierbarer Tiefe
-- `getKlines` - Candlestick/Kline-Daten mit Zeitbereich-Unterstützung
-- `getSymbolDetail` - Detaillierte Kontraktspezifikationen und Handelsparameter abrufen
+Complete trading functionality with **18 KuCoin Futures API tools** including:
 
-### Order Management Tools
-- `addOrder` - Neue Futures-Orders platzieren (Limit/Market, mit Hebel)
-- `cancelOrder` - Spezifische Orders per ID stornieren
-- `cancelAllOrders` - Alle Orders oder für spezifisches Symbol stornieren
-- `getOrders` - Orders mit Filteroptionen auflisten (Standard: 20 Orders pro Seite)
-- `getOrderById` - Detaillierte Order-Informationen abrufen
-- `getOpenOrders` - Offene Order-Statistiken abrufen (Anzahl und Wert nicht ausgeführter Orders)
+### Market Data Tools (5)
+- `getSymbols` - Get all available futures trading symbols/contracts
+- `getTicker` - Get ticker information for specific or all symbols
+- `getOrderBook` - Get order book depth data (optimized part-orderbook endpoint)
+- `getKlines` - Get candlestick/kline data with time range support
+- `getSymbolDetail` - Get detailed contract specifications and trading parameters
 
-### Position Management Tools
-- `getPositions` - Alle offenen Positionen abrufen
-- `getPosition` - Positionsdetails für spezifisches Symbol
-- `modifyMargin` - Margin für Positionen hinzufügen oder entfernen
+### Order Management Tools (7)
+- `addOrder` - Place new futures orders (limit/market with leverage)
+- `cancelOrder` - Cancel specific orders by ID
+- `cancelAllOrders` - Cancel all orders or for specific symbol
+- `getOrders` - List orders with filtering options (default: 20 orders per page)
+- `getOrderById` - Get detailed order information
+- `addStopOrder` - Place take profit and/or stop loss orders
+- `getOpenOrders` - Get open order statistics (count and value of unexecuted orders)
 
-### Funding Rate Tools
-- `getFundingRate` - Aktuelle Funding-Raten abrufen
-- `getFundingHistory` - Historische Funding-Rate-Daten
+### Position Management Tools (3)
+- `getPositions` - Get all open positions
+- `getPosition` - Get position details for specific symbol
+- `modifyMargin` - Add or remove margin for positions
 
-## 📋 Voraussetzungen
+### Funding Rate Tools (2)
+- `getFundingRate` - Get current funding rates
+- `getFundingHistory` - Get historical funding rate data
 
-1. **KuCoin Futures API-Schlüssel**
-   - Gehe zu [KuCoin Futures API](https://futures.kucoin.com/api)
-   - Erstelle einen neuen API-Schlüssel mit den benötigten Berechtigungen:
-     - General (für Market Data)
-     - Trade (für Order Management)
-     - Transfer (falls benötigt)
+### Account Information Tools (1)
+- `getAccountFutures` - Get futures account overview for specified currency
 
-2. **GitHub OAuth App**
-   - Gehe zu [GitHub Developer Settings](https://github.com/settings/applications/new)
-   - Erstelle eine neue OAuth App mit:
-     - Application name: `KuCoin Futures MCP Server`
-     - Homepage URL: `http://localhost:8800`
-     - Authorization callback URL: `http://localhost:8800/callback`
+## 🔐 Authentication
 
-## 🛠️ Setup
+**Header-based authentication** with two supported methods:
+- **Custom Header**: `X-MCP-Auth-Key: your-auth-key`
+- **Bearer Token**: `Authorization: Bearer your-auth-key`
 
-### 1. Environment Variables konfigurieren
+Environment variable: `MCP_AUTH_KEY` (set in Vercel dashboard)
 
-Bearbeite die `.dev.vars` Datei und fülle sie mit deinen echten Werten aus:
+## 📋 Prerequisites
+
+1. **KuCoin Futures API Keys**
+   - Go to [KuCoin Futures API](https://futures.kucoin.com/api)
+   - Create a new API key with required permissions:
+     - General (for Market Data)
+     - Trade (for Order Management)
+     - Transfer (if needed)
+
+2. **Authentication Key**
+   - Generate a secure authentication key for MCP access
+   - Store as environment variable in Vercel dashboard
+
+## 🚀 Deployment (Production)
+
+This server is deployed on **Vercel Edge Functions** in European regions (Frankfurt, Dublin, Paris) to bypass KuCoin's US geo-restrictions.
+
+**Live Server**: `https://remote-mcp-server-with-auth.vercel.app`
+
+### Environment Variables (Vercel Dashboard)
+
+Set these environment variables in your Vercel project:
 
 ```bash
 # KuCoin Futures API credentials
-KUCOIN_API_KEY=dein_kucoin_api_key
-KUCOIN_API_SECRET=dein_kucoin_api_secret
-KUCOIN_API_PASSPHRASE=dein_kucoin_api_passphrase
+KUCOIN_API_KEY=your_kucoin_api_key
+KUCOIN_API_SECRET=your_kucoin_api_secret
+KUCOIN_API_PASSPHRASE=your_kucoin_api_passphrase
 
-# GitHub OAuth credentials
-GITHUB_CLIENT_ID=dein_github_client_id
-GITHUB_CLIENT_SECRET=dein_github_client_secret
-
-# Cookie encryption key (32+ Zeichen zufälliger String)
-COOKIE_ENCRYPTION_KEY=dein_sicherer_zufälliger_string_min_32_zeichen
+# MCP Authentication
+MCP_AUTH_KEY=your_secure_auth_key
 ```
 
-### 2. Abhängigkeiten installieren
+## 🛠️ Usage
 
-```bash
-npm install
-```
+### Claude Desktop Integration
 
-### 3. Development Server starten
-
-```bash
-wrangler dev
-```
-
-Der Server läuft auf `http://localhost:8800`
-
-### 4. Zu Claude Desktop hinzufügen
-
-Füge folgende Konfiguration zu deiner Claude Desktop `claude_desktop_config.json` hinzu:
+Add this configuration to your Claude Desktop `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "kucoin-futures": {
       "command": "npx",
-      "args": ["mcp-remote", "http://localhost:8800/mcp"],
+      "args": ["mcp-remote", "https://remote-mcp-server-with-auth.vercel.app/mcp"],
       "env": {}
     }
   }
 }
 ```
 
-## 🔐 Authentifizierung
+### n8n Workflow Integration
 
-Der Server verwendet GitHub OAuth für die Authentifizierung:
+For n8n workflows, use HTTP Request nodes with authentication:
 
-1. Beim ersten Zugriff wirst du zu GitHub weitergeleitet
-2. Autorisiere die Anwendung
-3. Du wirst zurück zum MCP Server geleitet
-4. Deine GitHub-Identität wird für alle API-Aufrufe verwendet
-
-## 🚀 Deployment
-
-### Production Secrets setzen
-
-```bash
-wrangler secret put KUCOIN_API_KEY
-wrangler secret put KUCOIN_API_SECRET
-wrangler secret put KUCOIN_API_PASSPHRASE
-wrangler secret put GITHUB_CLIENT_ID
-wrangler secret put GITHUB_CLIENT_SECRET
-wrangler secret put COOKIE_ENCRYPTION_KEY
+```json
+{
+  "method": "POST",
+  "url": "https://remote-mcp-server-with-auth.vercel.app/mcp",
+  "headers": {
+    "Content-Type": "application/json",
+    "X-MCP-Auth-Key": "your-auth-key"
+  },
+  "body": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "getSymbols",
+      "arguments": {}
+    }
+  }
+}
 ```
 
-### Deploy
+## 📝 Example Usage
 
-```bash
-wrangler deploy
-```
-
-## 📝 Verwendung
-
-Nach der Einrichtung kannst du in Claude Desktop direkt mit der KuCoin Futures API interagieren:
+After setup, you can interact with the KuCoin Futures API directly:
 
 ```
-"Zeige mir alle verfügbaren Trading-Symbole"
-"Was ist der aktuelle Ticker für XBTUSDTM?"
-"Platziere eine Limit-Order für 0.1 BTC auf XBTUSDTM bei $50000"
-"Zeige meine aktuellen Positionen"
-"Zeige meine offenen Order-Statistiken für XBTUSDTM"
+"Show me all available trading symbols"
+"What's the current ticker for XBTUSDTM?"
+"Place a limit order for 0.1 BTC on XBTUSDTM at $65000"
+"Show my current positions"
+"Get open order statistics for XBTUSDTM"
+"Place a stop loss order at $60000 for my BTC position"
 ```
+
+## ⚡ Architecture
+
+- **Runtime**: Vercel Edge Functions
+- **Regions**: European deployment (Frankfurt, Dublin, Paris)
+- **Authentication**: Header-based with environment variables
+- **Protocol**: JSON-RPC 2.0 compliant MCP server
+- **Geo-bypass**: Avoids KuCoin's US restrictions
 
 ## 🔧 Troubleshooting
 
-### OAuth Error: 401 invalid_token
-- Überprüfe deine GitHub OAuth-Credentials in `.dev.vars`
-- Stelle sicher, dass die Callback URL richtig konfiguriert ist: `http://localhost:8800/callback`
-- Regeneriere den COOKIE_ENCRYPTION_KEY mit mindestens 32 Zeichen
-- Stelle sicher, dass alle Umgebungsvariablen gesetzt sind
-
-### Cookie signature verification failed
-- Lösche alte Cookies: Besuche `http://localhost:8800/clear-cookies`
-- Stelle sicher, dass der COOKIE_ENCRYPTION_KEY mindestens 32 Zeichen hat
-- Starte den Development Server neu: `wrangler dev`
-- Verwende einen neuen Browser-Tab oder Inkognito-Modus
+### Authentication Errors (401 Unauthorized)
+- Check your `MCP_AUTH_KEY` environment variable in Vercel
+- Verify you're using the correct header: `X-MCP-Auth-Key` or `Authorization: Bearer`
+- Ensure no extra spaces in the auth key value
 
 ### KuCoin API Errors
-- Überprüfe deine KuCoin API-Credentials
-- Stelle sicher, dass dein API-Schlüssel die erforderlichen Berechtigungen hat
-- Überprüfe die API-Rate-Limits
+- Verify your KuCoin API credentials in Vercel environment variables
+- Ensure your API key has the required permissions (General, Trade)
+- Check KuCoin API rate limits (Market Data: 100 req/10s, Trading: 30 req/3s)
 
-### Type Errors
-```bash
-npm run type-check
-wrangler types
-```
+### Geo-restriction Errors
+- This server is deployed in European regions to bypass US restrictions
+- If you still encounter geo-blocks, the deployment region may need adjustment
+
+### Tool Execution Errors
+- Check tool parameters match the required schema
+- Verify the JSON-RPC request format is correct
+- Ensure all required parameters are provided
 
 ## 📊 API Limits
 
-Beachte die KuCoin API-Limits:
-- Market Data: 100 Anfragen/10s
-- Trading: 30 Anfragen/3s
-- Einzelne Symbole: Spezifische Limits pro Endpoint
+KuCoin API rate limits to be aware of:
+- **Market Data**: 100 requests/10s
+- **Trading**: 30 requests/3s
+- **Individual symbols**: Specific limits per endpoint
 
-## 🔒 Sicherheit
+## 🔒 Security
 
-- API-Schlüssel werden sicher verschlüsselt übertragen
-- HMAC SHA256-Signierung für alle KuCoin API-Aufrufe
-- GitHub OAuth für Benutzerauthentifizierung
-- Alle Eingaben werden mit Zod-Schemas validiert
+- **Encrypted transmission**: API keys securely transmitted via HTTPS
+- **HMAC SHA256 signature**: All KuCoin API calls are cryptographically signed
+- **Header authentication**: Secure MCP access control
+- **Input validation**: All inputs validated with Zod schemas
+- **Environment variables**: Sensitive data stored securely in Vercel
 
-## 📁 Projektstruktur
+## 📁 Project Structure
 
 ```
-src/
-├── kucoin-futures.ts     # Haupt-MCP-Server mit KuCoin API Integration
-├── types.ts              # TypeScript-Typen und Hilfsfunktionen
-└── auth/
-    ├── github-handler.ts # GitHub OAuth-Handler
-    └── oauth-utils.ts    # OAuth-Hilfsfunktionen
+api/
+└── mcp.ts                # Main MCP server with KuCoin API integration
+
+vercel.json               # Vercel deployment configuration
+package.json              # Dependencies and scripts
+README.md                 # This documentation
 ```
 
-## 📄 Lizenz
+## 🏗️ Recent Changes
 
-MIT License - siehe LICENSE Datei für Details.
+### Version 2.0.0 - Authentication & Migration
+- **Added header authentication** (`X-MCP-Auth-Key`, `Authorization: Bearer`)
+- **Migrated from Cloudflare Workers** to Vercel Edge Functions
+- **European deployment** to bypass KuCoin geo-restrictions
+- **Removed legacy OAuth/database** implementations
+- **Optimized for n8n workflows** with universal compatibility
+- **18 trading tools** fully functional and tested
+
+## 📄 License
+
+MIT License - see LICENSE file for details.
