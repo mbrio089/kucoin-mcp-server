@@ -233,9 +233,51 @@ class KuCoinFuturesClient {
   async getOpenOrders(symbol: string): Promise<any> {
     return this.makeRequest("GET", `/api/v1/openOrderStatistics?symbol=${symbol}`);
   }
+
+  async getPositionsHistory(symbol?: string, from?: number, to?: number, limit: number = 10, pageId: number = 1): Promise<any> {
+    let endpoint = "/api/v1/history-positions";
+    const params = new URLSearchParams();
+    
+    if (symbol) params.append("symbol", symbol);
+    if (from) params.append("from", from.toString());
+    if (to) params.append("to", to.toString());
+    params.append("limit", Math.min(limit, 200).toString()); // Max 200 per API docs
+    params.append("pageId", pageId.toString());
+    
+    if (params.toString()) endpoint += `?${params.toString()}`;
+    return this.makeRequest("GET", endpoint);
+  }
+
+  async getFills(
+    orderId?: string,
+    symbol?: string,
+    tradeTypes?: string,
+    side?: string,
+    type?: string,
+    startAt?: number,
+    endAt?: number,
+    currentPage: number = 1,
+    pageSize: number = 50
+  ): Promise<any> {
+    let endpoint = "/api/v1/fills";
+    const params = new URLSearchParams();
+    
+    if (orderId) params.append("orderId", orderId);
+    if (symbol) params.append("symbol", symbol);
+    if (tradeTypes) params.append("tradeTypes", tradeTypes);
+    if (side) params.append("side", side);
+    if (type) params.append("type", type);
+    if (startAt) params.append("startAt", startAt.toString());
+    if (endAt) params.append("endAt", endAt.toString());
+    params.append("currentPage", currentPage.toString());
+    params.append("pageSize", Math.min(pageSize, 1000).toString()); // Max 1000 per API docs
+    
+    if (params.toString()) endpoint += `?${params.toString()}`;
+    return this.makeRequest("GET", endpoint);
+  }
 }
 
-// MCP Tools definitions - All 17 KuCoin Futures tools
+// MCP Tools definitions - All 20 KuCoin Futures tools
 const allTools = [
   // Market Data Tools
   {
@@ -691,6 +733,91 @@ const allTools = [
       },
       required: ["symbol"]
     }
+  },
+  {
+    name: "getPositionsHistory",
+    description: "Get historical positions data sorted by close time (descending). Provides comprehensive position history including PNL, fees, open/close times, and leverage details for futures trading analysis.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: {
+          type: "string",
+          description: "Trading symbol (e.g., XBTUSDTM). Optional - if not provided, returns history for all symbols"
+        },
+        from: {
+          type: "number",
+          description: "Start timestamp for position closing time in milliseconds (Unix timestamp)"
+        },
+        to: {
+          type: "number", 
+          description: "End timestamp for position closing time in milliseconds (Unix timestamp)"
+        },
+        limit: {
+          type: "number",
+          description: "Number of results per page (max 200, default 10)",
+          minimum: 1,
+          maximum: 200,
+          default: 10
+        },
+        pageId: {
+          type: "number",
+          description: "Page number for pagination (default 1)",
+          minimum: 1,
+          default: 1
+        }
+      }
+    }
+  },
+  {
+    name: "getFills",
+    description: "Get filled/executed trades list with comprehensive trade execution details including price, size, fees, and liquidity info. Data available for up to one week. Essential for trade analysis and performance tracking.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        orderId: {
+          type: "string",
+          description: "Specific order ID to get fills for (optional - returns fills for specific order)"
+        },
+        symbol: {
+          type: "string",
+          description: "Trading symbol (e.g., XBTUSDTM). Optional - if not provided, returns fills for all symbols"
+        },
+        tradeTypes: {
+          type: "string",
+          description: "Transaction types: trade, adl, liquid, settlement (comma-separated for multiple types)"
+        },
+        side: {
+          type: "string",
+          enum: ["buy", "sell"],
+          description: "Order side filter: buy or sell"
+        },
+        type: {
+          type: "string",
+          description: "Order type filter (e.g., limit, market)"
+        },
+        startAt: {
+          type: "number",
+          description: "Start timestamp in milliseconds (Unix timestamp)"
+        },
+        endAt: {
+          type: "number", 
+          description: "End timestamp in milliseconds (Unix timestamp)"
+        },
+        currentPage: {
+          type: "number",
+          description: "Page number for pagination (default 1)",
+          minimum: 1,
+          default: 1
+        },
+        pageSize: {
+          type: "number",
+          description: "Number of results per page (default 50, max 1000)",
+          minimum: 1,
+          maximum: 1000,
+          default: 50
+        }
+      }
+    }
   }
 ];
 
@@ -980,6 +1107,26 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
       return await client.addStopOrder(normalizedArgs);
     case 'getOpenOrders':
       return await client.getOpenOrders(normalizedArgs.symbol);
+    case 'getPositionsHistory':
+      return await client.getPositionsHistory(
+        normalizedArgs.symbol,
+        normalizedArgs.from,
+        normalizedArgs.to,
+        normalizedArgs.limit || 10,
+        normalizedArgs.pageId || 1
+      );
+    case 'getFills':
+      return await client.getFills(
+        normalizedArgs.orderId,
+        normalizedArgs.symbol,
+        normalizedArgs.tradeTypes,
+        normalizedArgs.side,
+        normalizedArgs.type,
+        normalizedArgs.startAt,
+        normalizedArgs.endAt,
+        normalizedArgs.currentPage || 1,
+        normalizedArgs.pageSize || 50
+      );
     
     default:
       throw new Error(`Unknown tool: ${name}`);

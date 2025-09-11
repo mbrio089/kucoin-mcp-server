@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) Server for the KuCoin Futures API with header-bas
 
 ## 🚀 Features
 
-Complete trading functionality with **18 KuCoin Futures API tools** including:
+Complete trading functionality with **20 KuCoin Futures API tools** including:
 
 ### Market Data Tools (5)
 - `getSymbols` - Get all available futures trading symbols/contracts
@@ -13,7 +13,7 @@ Complete trading functionality with **18 KuCoin Futures API tools** including:
 - `getKlines` - Get candlestick/kline data with time range support
 - `getSymbolDetail` - Get detailed contract specifications and trading parameters
 
-### Order Management Tools (7)
+### Order Management Tools (8)
 - `addOrder` - Place new futures orders (limit/market with leverage)
 - `cancelOrder` - Cancel specific orders by ID
 - `cancelAllOrders` - Cancel all orders or for specific symbol
@@ -21,11 +21,13 @@ Complete trading functionality with **18 KuCoin Futures API tools** including:
 - `getOrderById` - Get detailed order information
 - `addStopOrder` - Place take profit and/or stop loss orders
 - `getOpenOrders` - Get open order statistics (count and value of unexecuted orders)
+- `getFills` - Get filled/executed trades with detailed execution info, fees, and liquidity data
 
-### Position Management Tools (3)
+### Position Management Tools (4)
 - `getPositions` - Get all open positions
 - `getPosition` - Get position details for specific symbol
 - `modifyMargin` - Add or remove margin for positions
+- `getPositionsHistory` - Get historical positions data with PNL, fees, and timing details
 
 ### Funding Rate Tools (2)
 - `getFundingRate` - Get current funding rates
@@ -128,6 +130,8 @@ After setup, you can interact with the KuCoin Futures API directly:
 "Show my current positions"
 "Get open order statistics for XBTUSDTM"
 "Place a stop loss order at $60000 for my BTC position"
+"Show my positions history for the last 30 days"
+"Get my filled trades for XBTUSDTM from yesterday"
 ```
 
 ## ⚡ Architecture
@@ -193,7 +197,7 @@ README.md                 # This documentation
 - **European deployment** to bypass KuCoin geo-restrictions
 - **Removed legacy OAuth/database** implementations
 - **Optimized for n8n workflows** with universal compatibility
-- **18 trading tools** fully functional and tested
+- **20 trading tools** fully functional and tested
 
 ## 📄 License
 
