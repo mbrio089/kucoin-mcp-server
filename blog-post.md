@@ -446,4 +446,4 @@ Whether you're building trading tools, financial analytics, or any other sophist
 
 *The complete source code for this project is available at: https://remote-mcp-server-with-auth.vercel.app*
 
-*For integration examples and detailed API documentation, see the project README at: [GitHub Repository](https://github.com/user/remote-mcp-server-with-auth)*
+*For integration examples and detailed API documentation, see the project README at: [GitHub Repository](https://github.com/mbrio089/kucoin-mcp-server)*
