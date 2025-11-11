@@ -364,42 +364,101 @@ const allTools = [
   // Order Management Tools
   {
     name: "addOrder",
-    description: "Place a new futures order",
+    description: "Place a new futures order (limit or market). REQUIRED: symbol, side, type, size, marginMode, positionSide. For limit orders, price is also required. Leverage is required when opening new positions or using ISOLATED margin mode. This is the primary tool for entering and exiting futures positions.",
     inputSchema: {
       type: "object",
       properties: {
+        clientOid: {
+          type: "string",
+          description: "Unique client order identifier (max 40 chars: numbers, letters, underscore, separator). Auto-generated if not provided.",
+          maxLength: 40,
+          pattern: "^[a-zA-Z0-9_-]+$"
+        },
         symbol: {
           type: "string",
-          description: "Trading symbol (e.g., XBTUSDTM)"
+          description: "Futures contract symbol (e.g., XBTUSDTM, ETHUSDTM). Must be a valid active futures trading pair. Use getSymbols tool to see all available contracts."
         },
         side: {
           type: "string",
           enum: ["buy", "sell"],
-          description: "Order side"
+          description: "Order side: 'buy' to go long or close short position, 'sell' to go short or close long position"
         },
         type: {
           type: "string",
           enum: ["limit", "market"],
-          description: "Order type"
+          description: "Order type: 'limit' for specific price execution (requires price parameter), 'market' for immediate execution at best available price"
         },
         size: {
           type: "number",
-          description: "Order size"
+          description: "Order quantity in contracts/lots. Must be a positive integer. Each contract's lot size varies by symbol (use getSymbolDetail to check multiplier and lot size).",
+          minimum: 1
         },
         price: {
-          type: "number",
-          description: "Order price (required for limit orders)"
-        },
-        clientOid: {
           type: "string",
-          description: "Unique client order identifier"
+          description: "Limit price for order execution. REQUIRED when type='limit'. Use string format to preserve precision (e.g., '65000.5'). Must comply with symbol's tick size."
         },
         leverage: {
+          type: "integer",
+          description: "Position leverage multiplier (e.g., 5, 10, 20). REQUIRED when: (1) Opening a new position, (2) Using ISOLATED margin mode, (3) First order for a symbol. Must be between symbol's min/max leverage range. Integer only, no decimals.",
+          minimum: 1
+        },
+        marginMode: {
+          type: "string",
+          enum: ["ISOLATED", "CROSS"],
+          description: "REQUIRED. Margin mode for the position: 'ISOLATED' - risk limited to position margin only, allows custom leverage per position. 'CROSS' - uses entire account margin, shares risk across all positions."
+        },
+        positionSide: {
+          type: "string",
+          enum: ["BOTH", "LONG", "SHORT"],
+          description: "REQUIRED. Position direction: 'BOTH' - one-way position mode (default, most common), 'LONG' - long side in hedge mode, 'SHORT' - short side in hedge mode. Use 'BOTH' unless you've enabled hedge mode on your account."
+        },
+        timeInForce: {
+          type: "string",
+          enum: ["GTC", "IOC", "FOK"],
+          description: "Time in force for limit orders: 'GTC' (Good Till Canceled) - default, remains active until filled or canceled, 'IOC' (Immediate or Cancel) - fill immediately or cancel unfilled portion, 'FOK' (Fill or Kill) - fill entire order immediately or cancel completely",
+          default: "GTC"
+        },
+        reduceOnly: {
+          type: "boolean",
+          description: "If true, order will only reduce existing position size and cannot increase it. Useful for closing positions without risk of opening opposite position. Extra size beyond position will be canceled.",
+          default: false
+        },
+        postOnly: {
+          type: "boolean",
+          description: "If true, order will only be posted as a maker order (pays maker fee, receives rebate on some exchanges). Order will be canceled if it would execute immediately as a taker. Cannot be used with IOC or FOK.",
+          default: false
+        },
+        hidden: {
+          type: "boolean",
+          description: "If true, order is hidden from the public order book. Hidden orders are not visible to other traders. Cannot be used with postOnly.",
+          default: false
+        },
+        iceberg: {
+          type: "boolean",
+          description: "If true, only a portion of the order is visible in the order book (requires visibleSize parameter). Reduces market impact for large orders. Cannot be used with postOnly.",
+          default: false
+        },
+        visibleSize: {
           type: "number",
-          description: "Leverage for the order"
+          description: "For iceberg orders only: the maximum visible quantity in the order book. Must be less than total size. Required when iceberg=true."
+        },
+        remark: {
+          type: "string",
+          description: "Optional order note/comment for tracking purposes (max 100 characters). Useful for tagging orders by strategy or purpose.",
+          maxLength: 100
         }
       },
-      required: ["symbol", "side", "type", "size"]
+      required: ["symbol", "side", "type", "size", "marginMode", "positionSide"],
+      allOf: [
+        {
+          if: { properties: { type: { const: "limit" } } },
+          then: { required: ["price"] }
+        },
+        {
+          if: { properties: { iceberg: { const: true } } },
+          then: { required: ["visibleSize"] }
+        }
+      ]
     }
   },
   {

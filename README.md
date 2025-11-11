@@ -231,7 +231,7 @@ Authorization: Bearer your-auth-key
 <details>
 <summary><strong>Order Management Tools (8)</strong></summary>
 
-- **`addOrder`** - Place limit/market orders with leverage
+- **`addOrder`** - Place limit/market orders (requires: symbol, side, type, size, marginMode, positionSide, leverage for new positions)
 - **`cancelOrder`** - Cancel specific order by ID
 - **`cancelAllOrders`** - Cancel all orders or by symbol
 - **`getOrders`** - List orders with filtering options

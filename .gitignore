@@ -168,3 +168,6 @@ dist
 
 # Vercel
 .vercel
+
+# Internal documentation
+ADDORDER_FIX_SUMMARY.md
