@@ -1152,6 +1152,75 @@ function authenticateRequest(request: Request, env: Env): { isAuthenticated: boo
   }
 }
 
+// ---- Server-side validation for order-executing tools ----
+// Mirrors the JSON Schema contract already exposed to clients, but enforced
+// server-side so a malformed order is rejected before it reaches KuCoin with
+// real funds. Validation only: on success the original (unmodified) arguments
+// are forwarded, so the payload semantics are never altered. Numeric fields
+// accept a number or a numeric string because different n8n nodes send either.
+const sideEnum = z.enum(["buy", "sell"]);
+const orderTypeEnum = z.enum(["limit", "market"]);
+const marginModeEnum = z.enum(["ISOLATED", "CROSS"]);
+const positionSideEnum = z.enum(["BOTH", "LONG", "SHORT"]);
+const stopPriceTypeEnum = z.enum(["TP", "MP", "IP"]);
+const numericLike = z.union([z.string().min(1), z.number()]);
+const hasValue = (v: unknown) => v !== undefined && v !== null && String(v).length > 0;
+
+// clientOid is intentionally optional here: it is auto-generated downstream
+// when omitted, so requiring it would reject valid calls.
+const addOrderSchema = z
+  .object({
+    symbol: z.string().min(1),
+    side: sideEnum,
+    type: orderTypeEnum,
+    size: z.coerce.number().int().positive(),
+    marginMode: marginModeEnum,
+    positionSide: positionSideEnum,
+    price: numericLike.optional(),
+    leverage: z.coerce.number().int().positive().optional(),
+  })
+  .passthrough()
+  .refine((o) => o.type !== "limit" || hasValue(o.price), {
+    message: "price is required when type is 'limit'",
+  });
+
+// Deliberately lenient: with closeOrder=true, KuCoin allows side, size and
+// leverage to be omitted (it just closes the whole position). To never block a
+// valid risk-management order, only the fundamentals are hard-required here
+// (symbol, at least one trigger price, price-when-limit); everything else is
+// only sanity-checked when present.
+const addStopOrderSchema = z
+  .object({
+    symbol: z.string().min(1),
+    side: sideEnum.optional(),
+    leverage: z.coerce.number().int().positive().optional(),
+    stopPriceType: stopPriceTypeEnum.optional(),
+    type: orderTypeEnum.optional(),
+    price: numericLike.optional(),
+    triggerStopUpPrice: numericLike.optional(),
+    triggerStopDownPrice: numericLike.optional(),
+    size: z.coerce.number().int().positive().optional(),
+    qty: numericLike.optional(),
+    valueQty: numericLike.optional(),
+  })
+  .passthrough()
+  .refine((o) => hasValue(o.triggerStopUpPrice) || hasValue(o.triggerStopDownPrice), {
+    message: "at least one of triggerStopUpPrice or triggerStopDownPrice is required",
+  })
+  .refine((o) => o.type !== "limit" || hasValue(o.price), {
+    message: "price is required when type is 'limit'",
+  });
+
+function validateOrThrow(schema: z.ZodTypeAny, toolName: string, args: any): void {
+  const result = schema.safeParse(args);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("; ");
+    throw new Error(`Invalid arguments for ${toolName}: ${issues}`);
+  }
+}
+
 // Helper function to execute tool calls
 async function executeToolCall(client: KuCoinFuturesClient, name: string, args: any) {
   // Normalize parameters from different MCP client formats
@@ -1171,6 +1240,7 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     
     // Order Management Tools
     case 'addOrder':
+      validateOrThrow(addOrderSchema, 'addOrder', normalizedArgs);
       return await client.addOrder(normalizedArgs);
     case 'cancelOrder':
       return await client.cancelOrder(normalizedArgs.orderId);
@@ -1201,6 +1271,7 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     
     // Advanced Order Management Tools
     case 'addStopOrder':
+      validateOrThrow(addStopOrderSchema, 'addStopOrder', normalizedArgs);
       // Auto-generate clientOid if not provided
       if (!normalizedArgs.clientOid) {
         normalizedArgs.clientOid = crypto.randomUUID();
