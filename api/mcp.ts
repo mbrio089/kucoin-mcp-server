@@ -15,7 +15,10 @@ class KuCoinFuturesClient {
   private apiSecret: string;
   private apiPassphrase: string;
   private baseUrl: string = "https://api-futures.kucoin.com";
-  
+  // Upstream request timeout. Edge functions have a hard wall-clock limit, so
+  // never let a hung KuCoin request block until the platform kills us.
+  private timeoutMs: number = 15000;
+
   constructor(apiKey: string, apiSecret: string, apiPassphrase: string) {
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
@@ -96,12 +99,22 @@ class KuCoinFuturesClient {
     if (requestBody) {
       console.log(`Request body:`, requestBody);
     }
-    
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: method.toUpperCase(),
-      headers,
-      body: requestBody || undefined
-    });
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: method.toUpperCase(),
+        headers,
+        body: requestBody || undefined,
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
+    } catch (err: any) {
+      if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+        console.error(`KuCoin API request timed out after ${this.timeoutMs}ms: ${method} ${endpoint}`);
+        throw new Error(`KuCoin API request timed out after ${this.timeoutMs}ms`);
+      }
+      throw err;
+    }
 
     console.log(`Response status: ${response.status}`);
     
