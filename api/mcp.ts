@@ -1084,6 +1084,22 @@ function normalizeParameters(args: any): any {
   return args;
 }
 
+// Constant-time string comparison to avoid leaking the auth key via timing.
+function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const aBytes = enc.encode(a);
+  const bBytes = enc.encode(b);
+  // Fold the length difference into the result and always walk the full
+  // length so the comparison time does not depend on where the first byte
+  // mismatches.
+  let diff = aBytes.length ^ bBytes.length;
+  const len = Math.max(aBytes.length, bBytes.length);
+  for (let i = 0; i < len; i++) {
+    diff |= (aBytes[i] ?? 0) ^ (bBytes[i] ?? 0);
+  }
+  return diff === 0;
+}
+
 // Authentication helper function
 function authenticateRequest(request: Request, env: Env): { isAuthenticated: boolean; error?: string } {
   // Fail closed: if no auth keys are configured, deny all access.
@@ -1114,7 +1130,7 @@ function authenticateRequest(request: Request, env: Env): { isAuthenticated: boo
   if (env.MCP_AUTH_KEY) validKeys.push(env.MCP_AUTH_KEY);
   if (env.MCP_AUTH_KEYS) validKeys.push(...env.MCP_AUTH_KEYS.split(',').map(k => k.trim()));
 
-  const isValid = validKeys.some(key => key === authHeader);
+  const isValid = validKeys.some(key => timingSafeEqual(key, authHeader));
   
   if (isValid) {
     console.log('Authentication successful');
