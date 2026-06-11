@@ -9,6 +9,14 @@ interface Env {
   MCP_AUTH_KEYS?: string; // Comma-separated list of keys for multiple teams
 }
 
+// Verbose logging (request lines, payloads, normalization) is opt-in via
+// MCP_DEBUG=true so that trading details don't land in production logs.
+// Errors are always logged via console.error regardless of this flag.
+const DEBUG = process.env.MCP_DEBUG === 'true';
+function debugLog(...args: any[]): void {
+  if (DEBUG) console.log(...args);
+}
+
 // KuCoin Futures API client adapted for Vercel Edge Runtime
 class KuCoinFuturesClient {
   private apiKey: string;
@@ -95,9 +103,9 @@ class KuCoinFuturesClient {
       "Content-Type": "application/json"
     };
 
-    console.log(`Making KuCoin API request from Vercel EU edge: ${method} ${endpoint}`);
+    debugLog(`Making KuCoin API request from Vercel EU edge: ${method} ${endpoint}`);
     if (requestBody) {
-      console.log(`Request body:`, requestBody);
+      debugLog(`Request body:`, requestBody);
     }
 
     let response: Response;
@@ -116,7 +124,7 @@ class KuCoinFuturesClient {
       throw err;
     }
 
-    console.log(`Response status: ${response.status}`);
+    debugLog(`Response status: ${response.status}`);
     
     if (!response.ok) {
       const errorText = await response.text();
@@ -231,11 +239,11 @@ class KuCoinFuturesClient {
       }
       
       // Add debug logging for troubleshooting
-      console.log(`addStopOrder called with params:`, JSON.stringify(orderParams));
-      
+      debugLog(`addStopOrder called with params:`, JSON.stringify(orderParams));
+
       // Let KuCoin API handle all validation - it provides proper error messages
       const result = await this.makeRequest("POST", "/api/v1/st-orders", orderParams);
-      console.log(`addStopOrder successful:`, JSON.stringify(result));
+      debugLog(`addStopOrder successful:`, JSON.stringify(result));
       return result;
     } catch (error) {
       console.error(`addStopOrder failed:`, error);
@@ -326,7 +334,7 @@ const allTools = [
         },
         depth: {
           type: "number",
-          description: "Order book depth layer. Values 1-20 will use depth20, values 21-100 will use depth100",
+          description: "Order book depth: 20 returns the depth20 snapshot, 100 returns the depth100 snapshot.",
           enum: [20, 100],
           default: 20
         }
@@ -1053,34 +1061,34 @@ async function handleStreamableTransport(request: Request, env: Env): Promise<Re
 
 // Helper function to normalize parameters from different n8n MCP node formats
 function normalizeParameters(args: any): any {
-  console.log('Raw args received:', JSON.stringify(args));
-  
+  debugLog('Raw args received:', JSON.stringify(args));
+
   // Handle array wrapper from built-in n8n MCP node: [{ query: { value: { ...params } }, tool: {...} }]
   if (Array.isArray(args) && args.length > 0) {
-    console.log('Detected array wrapper from built-in n8n MCP node, extracting first element');
+    debugLog('Detected array wrapper from built-in n8n MCP node, extracting first element');
     args = args[0]; // Extract first element from array
   }
-  
+
   // Handle built-in n8n MCP node format: { query: { value: { ...params } } }
   if (args && typeof args === 'object' && args.query && args.query.value) {
-    console.log('Detected built-in n8n MCP node format, extracting from query.value');
+    debugLog('Detected built-in n8n MCP node format, extracting from query.value');
     return args.query.value;
   }
-  
+
   // Handle direct value wrapper: { value: { ...params } } (when array detection fails)
   if (args && typeof args === 'object' && args.value && typeof args.value === 'object') {
-    console.log('Detected direct value wrapper, extracting from value');
+    debugLog('Detected direct value wrapper, extracting from value');
     return args.value;
   }
-  
+
   // Handle community n8n MCP node format: { Tool_Parameters: { ...params } }
   if (args && typeof args === 'object' && args.Tool_Parameters) {
-    console.log('Detected community n8n MCP node format, extracting from Tool_Parameters');
+    debugLog('Detected community n8n MCP node format, extracting from Tool_Parameters');
     return args.Tool_Parameters;
   }
-  
+
   // Handle standard format (Claude Desktop, direct API calls): { ...params }
-  console.log('Using standard parameter format');
+  debugLog('Using standard parameter format');
   return args;
 }
 
@@ -1118,7 +1126,7 @@ function authenticateRequest(request: Request, env: Env): { isAuthenticated: boo
                     request.headers.get('Authorization')?.replace('Bearer ', '');
 
   if (!authHeader) {
-    console.log('Authentication failed: No auth header provided');
+    console.warn('Authentication failed: No auth header provided');
     return { 
       isAuthenticated: false, 
       error: 'Authentication required. Provide X-MCP-Auth-Key header or Authorization: Bearer <key>' 
@@ -1133,13 +1141,13 @@ function authenticateRequest(request: Request, env: Env): { isAuthenticated: boo
   const isValid = validKeys.some(key => timingSafeEqual(key, authHeader));
   
   if (isValid) {
-    console.log('Authentication successful');
+    debugLog('Authentication successful');
     return { isAuthenticated: true };
   } else {
-    console.log('Authentication failed: Invalid auth key');
-    return { 
-      isAuthenticated: false, 
-      error: 'Invalid authentication key' 
+    console.warn('Authentication failed: Invalid auth key');
+    return {
+      isAuthenticated: false,
+      error: 'Invalid authentication key'
     };
   }
 }
