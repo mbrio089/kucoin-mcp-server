@@ -952,40 +952,16 @@ async function handleStreamableTransport(request: Request, env: Env): Promise<Re
         
         try {
           const result = await executeToolCall(client, body.params.name, body.params.arguments);
-          
+
           // Check for format query parameter
           const url = new URL(request.url);
           const format = url.searchParams.get('format');
-          
-          if (format === 'raw') {
-            // Return direct JSON without MCP wrapper for HTTP workflows
-            return new Response(JSON.stringify(result), {
-              headers: { ...headers, 'Content-Type': 'application/json' }
-            });
-          } else if (format === 'hybrid') {
-            // Return MCP-compliant JSON-RPC but with direct data (for n8n community node)
-            const response = {
-              jsonrpc: "2.0",
-              id: body.id,
-              result: result
-            };
-            return new Response(JSON.stringify(response), {
-              headers: { ...headers, 'Content-Type': 'application/json' }
-            });
-          } else {
-            // Standard MCP wrapped response for Claude Desktop
-            const response = {
-              jsonrpc: "2.0",
-              id: body.id,
-              result: {
-                content: [{ type: "text", text: JSON.stringify(result) }]
-              }
-            };
-            return new Response(JSON.stringify(response), {
-              headers: { ...headers, 'Content-Type': 'application/json' }
-            });
-          }
-          
+
+          return formatToolCallSuccess(result, format, body.id, {
+            ...headers,
+            'Content-Type': 'application/json'
+          });
+
         } catch (error: any) {
           const errorResponse = {
             jsonrpc: "2.0",
@@ -1221,6 +1197,31 @@ function validateOrThrow(schema: z.ZodTypeAny, toolName: string, args: any): voi
   }
 }
 
+// Shared response formatting for a successful tools/call. Both the /mcp and
+// /stream endpoints support the same three output shapes (raw | hybrid |
+// standard); the caller passes its own header set so each endpoint's response
+// headers stay exactly as before.
+function formatToolCallSuccess(
+  result: any,
+  format: string | null,
+  id: any,
+  headers: Record<string, string>
+): Response {
+  if (format === 'raw') {
+    // Return direct JSON without MCP wrapper for HTTP workflows
+    return new Response(JSON.stringify(result), { headers });
+  } else if (format === 'hybrid') {
+    // MCP-compliant JSON-RPC envelope but with direct data (n8n community node)
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), { headers });
+  }
+  // Standard MCP wrapped response for Claude Desktop
+  return new Response(JSON.stringify({
+    jsonrpc: "2.0",
+    id,
+    result: { content: [{ type: "text", text: JSON.stringify(result) }] }
+  }), { headers });
+}
+
 // Helper function to execute tool calls
 async function executeToolCall(client: KuCoinFuturesClient, name: string, args: any) {
   // Normalize parameters from different MCP client formats
@@ -1410,44 +1411,15 @@ export default async function handler(request: Request) {
         );
         
         try {
-          let result;
-          
           // Execute the requested tool using helper function (same as /stream endpoint)
-          result = await executeToolCall(client, body.params.name, body.params.arguments);
-          
+          const result = await executeToolCall(client, body.params.name, body.params.arguments);
+
           // Check for format query parameter
           const url = new URL(request.url);
           const format = url.searchParams.get('format');
-          
-          if (format === 'raw') {
-            // Return direct JSON without MCP wrapper for HTTP workflows
-            return new Response(JSON.stringify(result), {
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-              }
-            });
-          } else if (format === 'hybrid') {
-            // Return MCP-compliant JSON-RPC but with direct data (for n8n community node)
-            return new Response(JSON.stringify({
-              jsonrpc: "2.0",
-              id: body.id,
-              result: result
-            }), { headers });
-          } else {
-            // Standard MCP wrapped response for Claude Desktop
-            return new Response(JSON.stringify({
-              jsonrpc: "2.0",
-              id: body.id,
-              result: {
-                content: [{
-                  type: "text", 
-                  text: JSON.stringify(result)
-                }]
-              }
-            }), { headers });
-          }
-          
+
+          return formatToolCallSuccess(result, format, body.id, headers);
+
         } catch (error) {
           console.error(`Tool execution error for ${body.method}:`, error);
           return new Response(JSON.stringify({
