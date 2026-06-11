@@ -1073,10 +1073,15 @@ function normalizeParameters(args: any): any {
 
 // Authentication helper function
 function authenticateRequest(request: Request, env: Env): { isAuthenticated: boolean; error?: string } {
-  // If no auth keys are configured, allow access (backward compatibility)
+  // Fail closed: if no auth keys are configured, deny all access.
+  // This server can place/cancel real-money orders, so a missing or unset
+  // MCP_AUTH_KEY must never silently expose it to the public internet.
   if (!env.MCP_AUTH_KEY && !env.MCP_AUTH_KEYS) {
-    console.log('No authentication configured, allowing access');
-    return { isAuthenticated: true };
+    console.error('Authentication denied: no MCP_AUTH_KEY/MCP_AUTH_KEYS configured (server misconfiguration)');
+    return {
+      isAuthenticated: false,
+      error: 'Server misconfiguration: no authentication key configured. Access denied.'
+    };
   }
 
   // Get auth header - support both X-MCP-Auth-Key and Authorization Bearer
