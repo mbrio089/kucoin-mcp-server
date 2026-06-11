@@ -141,7 +141,8 @@ class KuCoinFuturesClient {
   }
 
   async getTicker(symbol?: string): Promise<any> {
-    const endpoint = symbol ? `/api/v1/ticker?symbol=${symbol}` : "/api/v1/ticker";
+    // KuCoin Futures /ticker requires a symbol (400100 otherwise); use /allTickers for all.
+    const endpoint = symbol ? `/api/v1/ticker?symbol=${symbol}` : "/api/v1/allTickers";
     return this.makeRequest("GET", endpoint);
   }
 
