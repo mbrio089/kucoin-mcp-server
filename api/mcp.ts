@@ -162,10 +162,33 @@ class KuCoinFuturesClient {
     return this.makeRequest("GET", `/api/v1/contracts/${symbol}`);
   }
 
+  /**
+   * Idempotency key for order placement. When the caller supplies no clientOid we
+   * derive a deterministic one from the order parameters plus a short time bucket.
+   * A retried identical order within the window reuses the same clientOid, so
+   * KuCoin rejects the duplicate instead of opening a second position; distinct
+   * orders (or the same order after the window) still get unique ids. Callers that
+   * need exact control should always pass their own clientOid.
+   */
+  private async deriveClientOid(params: any): Promise<string> {
+    const windowMs = 120000; // 2-minute idempotency window
+    const bucket = Math.floor(Date.now() / windowMs);
+    const canonical = JSON.stringify([
+      params.symbol, params.side, params.type, params.size, params.qty,
+      params.valueQty, params.price, params.leverage, params.marginMode,
+      params.positionSide, params.reduceOnly, params.closeOrder,
+      params.triggerStopUpPrice, params.triggerStopDownPrice, params.stopPriceType,
+      bucket,
+    ]);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+    const hex = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+    return `auto_${hex.slice(0, 32)}`;
+  }
+
   // Order Management Methods
   async addOrder(orderParams: any): Promise<any> {
     if (!orderParams.clientOid) {
-      orderParams.clientOid = crypto.randomUUID();
+      orderParams.clientOid = await this.deriveClientOid(orderParams);
     }
     return this.makeRequest("POST", "/api/v1/orders", orderParams);
   }
@@ -233,9 +256,9 @@ class KuCoinFuturesClient {
   // Advanced Order Management - Take Profit and Stop Loss
   async addStopOrder(orderParams: any): Promise<any> {
     try {
-      // Auto-generate clientOid if not provided (only essential logic)
+      // Auto-generate a deterministic idempotency clientOid if not provided
       if (!orderParams.clientOid) {
-        orderParams.clientOid = crypto.randomUUID();
+        orderParams.clientOid = await this.deriveClientOid(orderParams);
       }
       
       // Add debug logging for troubleshooting
@@ -1273,10 +1296,7 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     // Advanced Order Management Tools
     case 'addStopOrder':
       validateOrThrow(addStopOrderSchema, 'addStopOrder', normalizedArgs);
-      // Auto-generate clientOid if not provided
-      if (!normalizedArgs.clientOid) {
-        normalizedArgs.clientOid = crypto.randomUUID();
-      }
+      // clientOid is derived deterministically inside addStopOrder when absent
       return await client.addStopOrder(normalizedArgs);
     case 'getOpenOrders':
       return await client.getOpenOrders(normalizedArgs.symbol);
