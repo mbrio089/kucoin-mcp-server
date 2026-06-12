@@ -406,10 +406,43 @@ const allTools = [
       required: ["symbol"]
     }
   },
+  {
+    name: "calculatePositionSize",
+    description: "Compute the order size (in lots) for a given risk budget, server-side and deterministically: size = floor(equity * riskPercentage% * leverage / (price * multiplier)), respecting the contract's lotSize granularity and maxOrderQty. Uses live account equity and contract specs. The same computation is applied automatically when addOrder/addStopOrder receive a riskPercentage, so calling this tool is optional (preview/transparency).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: {
+          type: "string",
+          description: "Futures contract symbol (e.g., XBTUSDTM)"
+        },
+        riskPercentage: {
+          type: "number",
+          description: "Percent of account equity (0-100] to allocate as margin for this position",
+          exclusiveMinimum: 0,
+          maximum: 100
+        },
+        leverage: {
+          type: "number",
+          description: "Position leverage multiplier (default 1)",
+          minimum: 1
+        },
+        entryPrice: {
+          type: "string",
+          description: "Intended entry price (tick-quantized). Falls back to the current ticker price when omitted."
+        },
+        currency: {
+          type: "string",
+          description: "Settlement currency for the equity lookup (default USDT)"
+        }
+      },
+      required: ["symbol", "riskPercentage"]
+    }
+  },
   // Order Management Tools
   {
     name: "addOrder",
-    description: "Place a new futures order (limit or market). REQUIRED: symbol, side, type, size, marginMode, positionSide. For limit orders, price is also required. Leverage is required when opening new positions or using ISOLATED margin mode. This is the primary tool for entering and exiting futures positions.",
+    description: "Place a new futures order (limit or market). REQUIRED: symbol, side, type, marginMode, positionSide, and either riskPercentage (preferred — server computes size) or size. For limit orders, price is also required. Leverage is required when opening new positions or using ISOLATED margin mode. This is the primary tool for entering and exiting futures positions. NOTE: entry orders with a clientOid starting with 'ta_' MUST provide riskPercentage; their size is always computed server-side.",
     inputSchema: {
       type: "object",
       properties: {
@@ -435,8 +468,14 @@ const allTools = [
         },
         size: {
           type: "number",
-          description: "Order quantity in contracts/lots. Must be a positive integer. Each contract's lot size varies by symbol (use getSymbolDetail to check multiplier and lot size).",
+          description: "Order quantity in contracts/lots. Must be a positive integer. Each contract's lot size varies by symbol (use getSymbolDetail to check multiplier and lot size). Ignored when riskPercentage is provided (server-side sizing takes precedence).",
           minimum: 1
+        },
+        riskPercentage: {
+          type: "number",
+          description: "PREFERRED sizing input: percent of account equity (0-100] to allocate as margin for this order. The server computes size = floor(equity * riskPercentage% * leverage / (price * multiplier)) and overrides any provided size. REQUIRED for entry orders whose clientOid starts with 'ta_'. Not forwarded to the exchange.",
+          exclusiveMinimum: 0,
+          maximum: 100
         },
         price: {
           type: "string",
@@ -493,8 +532,14 @@ const allTools = [
           maxLength: 100
         }
       },
-      required: ["symbol", "side", "type", "size", "marginMode", "positionSide"],
+      required: ["symbol", "side", "type", "marginMode", "positionSide"],
       allOf: [
+        {
+          anyOf: [
+            { required: ["riskPercentage"] },
+            { required: ["size"] }
+          ]
+        },
         {
           if: { properties: { type: { const: "limit" } } },
           then: { required: ["price"] }
@@ -675,7 +720,7 @@ const allTools = [
   // Advanced Order Management Tools
   {
     name: "addStopOrder",
-    description: "Place a take profit and/or stop loss order. REQUIRED: symbol, side, leverage (integer), stopPriceType ('MP' recommended), at least one trigger price, and exactly one quantity (size/qty/valueQty). For limit orders, also provide 'price'. This advanced order type automatically executes when price reaches specified trigger levels, providing risk management and profit-taking capabilities.",
+    description: "Place a take profit and/or stop loss order. REQUIRED: symbol, side, leverage (integer), stopPriceType ('MP' recommended), at least one trigger price, and exactly one quantity (riskPercentage preferred — server computes size — or size/qty/valueQty). For limit orders, also provide 'price'. This advanced order type automatically executes when price reaches specified trigger levels, providing risk management and profit-taking capabilities. NOTE: entry orders with a clientOid starting with 'ta_' MUST provide riskPercentage; their size is always computed server-side.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -757,7 +802,13 @@ const allTools = [
         size: {
           type: "integer",
           minimum: 1,
-          description: "Order size in LOTS (whole number). Choose exactly ONE of: size, qty, or valueQty."
+          description: "Order size in LOTS (whole number). Choose exactly ONE of: size, qty, or valueQty. Ignored when riskPercentage is provided (server-side sizing takes precedence)."
+        },
+        riskPercentage: {
+          type: "number",
+          description: "PREFERRED sizing input: percent of account equity (0-100] to allocate as margin for this order. The server computes size = floor(equity * riskPercentage% * leverage / (price * multiplier)) and overrides any provided size/qty/valueQty. REQUIRED for entry orders whose clientOid starts with 'ta_'. Not forwarded to the exchange.",
+          exclusiveMinimum: 0,
+          maximum: 100
         },
         qty: {
           type: "string",
@@ -808,6 +859,7 @@ const allTools = [
         },
         {
           anyOf: [
+            { required: ["riskPercentage"] },
             { required: ["size"] },
             { required: ["qty"] },
             { required: ["valueQty"] }
@@ -1173,7 +1225,8 @@ const addOrderSchema = z
     symbol: z.string().min(1),
     side: sideEnum,
     type: orderTypeEnum,
-    size: z.coerce.number().int().positive(),
+    size: z.coerce.number().int().positive().optional(),
+    riskPercentage: z.coerce.number().positive().max(100).optional(),
     marginMode: marginModeEnum,
     positionSide: positionSideEnum,
     price: numericLike.optional(),
@@ -1182,6 +1235,9 @@ const addOrderSchema = z
   .passthrough()
   .refine((o) => o.type !== "limit" || hasValue(o.price), {
     message: "price is required when type is 'limit'",
+  })
+  .refine((o) => hasValue(o.size) || hasValue(o.riskPercentage) || o.closeOrder === true, {
+    message: "either size or riskPercentage is required",
   });
 
 // Deliberately lenient: with closeOrder=true, KuCoin allows side, size and
@@ -1200,6 +1256,7 @@ const addStopOrderSchema = z
     triggerStopUpPrice: numericLike.optional(),
     triggerStopDownPrice: numericLike.optional(),
     size: z.coerce.number().int().positive().optional(),
+    riskPercentage: z.coerce.number().positive().max(100).optional(),
     qty: numericLike.optional(),
     valueQty: numericLike.optional(),
   })
@@ -1219,6 +1276,134 @@ function validateOrThrow(schema: z.ZodTypeAny, toolName: string, args: any): voi
       .join("; ");
     throw new Error(`Invalid arguments for ${toolName}: ${issues}`);
   }
+}
+
+// ---- Server-side position sizing ----
+// Sizing is margin-based and matches the trader system's risk accounting:
+// riskPercentage% of account equity is committed as margin, multiplied by
+// leverage to get the notional budget, then converted to whole lots.
+// Enforcing this on the server (instead of trusting the calling LLM agent)
+// guarantees no order can reach KuCoin with an unvalidated size.
+const TRADER_OID_PREFIX = /^ta_/;
+
+async function computePositionSize(
+  client: KuCoinFuturesClient,
+  args: { symbol?: string; riskPercentage?: any; leverage?: any; entryPrice?: any; currency?: string }
+): Promise<any> {
+  const symbol = args.symbol;
+  if (!symbol) throw new Error("calculatePositionSize: symbol is required");
+  const riskPct = Number(args.riskPercentage);
+  if (!isFinite(riskPct) || riskPct <= 0 || riskPct > 100) {
+    throw new Error(`calculatePositionSize: riskPercentage must be in (0, 100], got ${args.riskPercentage}`);
+  }
+  const leverage = hasValue(args.leverage) ? Number(args.leverage) : 1;
+  if (!isFinite(leverage) || leverage <= 0) {
+    throw new Error(`calculatePositionSize: leverage must be positive, got ${args.leverage}`);
+  }
+
+  const [detailResp, accountResp] = await Promise.all([
+    client.getSymbolDetail(symbol),
+    client.getAccountFutures(args.currency || "USDT"),
+  ]);
+  const detail = detailResp?.data;
+  if (!detail) throw new Error(`calculatePositionSize: no contract details for ${symbol}`);
+  const equity = Number(accountResp?.data?.accountEquity);
+  if (!isFinite(equity) || equity <= 0) {
+    throw new Error("calculatePositionSize: could not read accountEquity from account overview");
+  }
+
+  let price = hasValue(args.entryPrice) ? Number(args.entryPrice) : NaN;
+  if (!isFinite(price) || price <= 0) {
+    const tickerResp = await client.getTicker(symbol);
+    price = Number(tickerResp?.data?.price);
+  }
+  if (!isFinite(price) || price <= 0) {
+    throw new Error(`calculatePositionSize: could not determine a price for ${symbol}`);
+  }
+
+  const multiplier = Number(detail.multiplier);
+  if (!isFinite(multiplier) || multiplier <= 0) {
+    throw new Error(`calculatePositionSize: invalid contract multiplier for ${symbol}`);
+  }
+  const lotSize = isFinite(Number(detail.lotSize)) && Number(detail.lotSize) > 0 ? Number(detail.lotSize) : 1;
+  const maxOrderQty = isFinite(Number(detail.maxOrderQty)) && Number(detail.maxOrderQty) > 0 ? Number(detail.maxOrderQty) : null;
+
+  const marginBudgetUsdt = equity * (riskPct / 100);
+  const notionalBudgetUsdt = marginBudgetUsdt * leverage;
+  const contractValueUsdt = price * multiplier;
+  let size = Math.floor(notionalBudgetUsdt / contractValueUsdt / lotSize) * lotSize;
+  if (maxOrderQty !== null && size > maxOrderQty) {
+    size = Math.floor(maxOrderQty / lotSize) * lotSize;
+  }
+  if (!isFinite(size) || size < lotSize || size <= 0) {
+    throw new Error(
+      `calculatePositionSize: risk budget too small — ${riskPct}% of equity ${equity.toFixed(2)} USDT at ${leverage}x ` +
+      `covers ${(notionalBudgetUsdt / contractValueUsdt).toFixed(3)} lots of ${symbol} ` +
+      `(contract value ${contractValueUsdt.toFixed(4)} USDT/lot, min lot ${lotSize})`
+    );
+  }
+
+  return {
+    code: "200000",
+    data: {
+      symbol,
+      size,
+      riskPercentage: riskPct,
+      leverage,
+      price,
+      equityUsdt: equity,
+      marginBudgetUsdt,
+      notionalBudgetUsdt,
+      contractValueUsdt,
+      multiplier,
+      lotSize,
+      maxOrderQty,
+      formula: "size = floor(equity * riskPercentage% * leverage / (price * multiplier)) quantized to lotSize",
+    },
+  };
+}
+
+// Applied to addOrder/addStopOrder after schema validation, before the
+// exchange call. Mutates params: resolves riskPercentage into a server-
+// computed size (overriding any client-provided quantity) and strips the
+// helper field so KuCoin never sees it. Orders from the autonomous trader
+// (clientOid 'ta_*') that open exposure MUST carry riskPercentage — the
+// calling agent is structurally unable to place an unvalidated size.
+async function applyServerSideSizing(
+  client: KuCoinFuturesClient,
+  toolName: string,
+  params: any
+): Promise<void> {
+  const isCloseLike = params.closeOrder === true || params.reduceOnly === true;
+  const isTraderEntry =
+    typeof params.clientOid === "string" && TRADER_OID_PREFIX.test(params.clientOid) && !isCloseLike;
+  const hasRisk = hasValue(params.riskPercentage);
+
+  if (!hasRisk) {
+    if (isTraderEntry) {
+      throw new Error(
+        `${toolName}: riskPercentage is required for ta_* entry orders — size is computed server-side. ` +
+        `Re-submit the same order with riskPercentage (percent of equity to commit as margin); ` +
+        `any client-side size is not trusted.`
+      );
+    }
+    return; // manual/non-trader call without riskPercentage: behavior unchanged
+  }
+
+  const riskPercentage = params.riskPercentage;
+  delete params.riskPercentage; // never forward the helper field to KuCoin
+  if (isCloseLike) return; // closes/reductions size against the position, not the risk budget
+
+  const sizing = await computePositionSize(client, {
+    symbol: params.symbol,
+    riskPercentage,
+    leverage: params.leverage,
+    entryPrice: params.price,
+  });
+  delete params.qty;
+  delete params.valueQty;
+  params.size = sizing.data.size;
+  debugLog(`${toolName}: server-side sizing applied`, JSON.stringify(sizing.data));
 }
 
 // Shared response formatting for a successful tools/call. Both the /mcp and
@@ -1262,10 +1447,13 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
       return await client.getKlines(normalizedArgs.symbol, normalizedArgs.granularity, normalizedArgs.from, normalizedArgs.to);
     case 'getSymbolDetail':
       return await client.getSymbolDetail(normalizedArgs.symbol);
-    
+    case 'calculatePositionSize':
+      return await computePositionSize(client, normalizedArgs);
+
     // Order Management Tools
     case 'addOrder':
       validateOrThrow(addOrderSchema, 'addOrder', normalizedArgs);
+      await applyServerSideSizing(client, 'addOrder', normalizedArgs);
       return await client.addOrder(normalizedArgs);
     case 'cancelOrder':
       return await client.cancelOrder(normalizedArgs.orderId);
@@ -1297,6 +1485,7 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     // Advanced Order Management Tools
     case 'addStopOrder':
       validateOrThrow(addStopOrderSchema, 'addStopOrder', normalizedArgs);
+      await applyServerSideSizing(client, 'addStopOrder', normalizedArgs);
       // clientOid is derived deterministically inside addStopOrder when absent
       return await client.addStopOrder(normalizedArgs);
     case 'getOpenOrders':
