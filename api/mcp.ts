@@ -279,6 +279,15 @@ class KuCoinFuturesClient {
     return this.makeRequest("GET", `/api/v1/openOrderStatistics?symbol=${symbol}`);
   }
 
+  async getStopOrders(symbol?: string, side?: string, pageSize: number = 50, currentPage: number = 1): Promise<any> {
+    const params = new URLSearchParams();
+    if (symbol) params.append("symbol", symbol);
+    if (side) params.append("side", side);
+    params.append("pageSize", pageSize.toString());
+    params.append("currentPage", currentPage.toString());
+    return this.makeRequest("GET", `/api/v1/stopOrders?${params.toString()}`);
+  }
+
   async getPositionsHistory(symbol?: string, from?: number, to?: number, limit: number = 10, pageId: number = 1): Promise<any> {
     let endpoint = "/api/v1/history-positions";
     const params = new URLSearchParams();
@@ -442,7 +451,7 @@ const allTools = [
   // Order Management Tools
   {
     name: "addOrder",
-    description: "Place a new futures order (limit or market). REQUIRED: symbol, side, type, marginMode, positionSide, and either riskPercentage (preferred — server computes size) or size. For limit orders, price is also required. Leverage is required when opening new positions or using ISOLATED margin mode. This is the primary tool for entering and exiting futures positions. NOTE: entry orders with a clientOid starting with 'ta_' MUST provide riskPercentage; their size is always computed server-side.",
+    description: "Place a new futures order (limit or market). REQUIRED: symbol, side, type, marginMode, positionSide, and either riskPercentage (preferred — server computes size) or size. For limit orders, price is also required. Leverage is required when opening new positions or using ISOLATED margin mode. This is the primary tool for entering and exiting futures positions. NOTE: entry orders with a clientOid starting with 'ta_' MUST provide riskPercentage; their size is always computed server-side. Orders with a clientOid starting with 'pm_' (position manager) MUST set reduceOnly or closeOrder — they can only reduce risk.",
     inputSchema: {
       type: "object",
       properties: {
@@ -720,7 +729,7 @@ const allTools = [
   // Advanced Order Management Tools
   {
     name: "addStopOrder",
-    description: "Place a take profit and/or stop loss order. REQUIRED: symbol, side, leverage (integer), stopPriceType ('MP' recommended), at least one trigger price, and exactly one quantity (riskPercentage preferred — server computes size — or size/qty/valueQty). For limit orders, also provide 'price'. This advanced order type automatically executes when price reaches specified trigger levels, providing risk management and profit-taking capabilities. NOTE: entry orders with a clientOid starting with 'ta_' MUST provide riskPercentage; their size is always computed server-side.",
+    description: "Place a take profit and/or stop loss order. REQUIRED: symbol, side, leverage (integer), stopPriceType ('MP' recommended), at least one trigger price, and exactly one quantity (riskPercentage preferred — server computes size — or size/qty/valueQty). For limit orders, also provide 'price'. This advanced order type automatically executes when price reaches specified trigger levels, providing risk management and profit-taking capabilities. NOTE: entry orders with a clientOid starting with 'ta_' MUST provide riskPercentage; their size is always computed server-side. Orders with a clientOid starting with 'pm_' (position manager) MUST set reduceOnly or closeOrder — they can only reduce risk.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -888,6 +897,37 @@ const allTools = [
         }
       },
       required: ["symbol"]
+    }
+  },
+  {
+    name: "getStopOrders",
+    description: "Get the list of untriggered stop orders (resting stop-loss/take-profit orders placed via addStopOrder). These live on a separate KuCoin endpoint and do NOT appear in getOrders/getOpenOrders. Essential for verifying that an open position is actually protected by a stop order on the exchange.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: {
+          type: "string",
+          description: "Trading symbol (e.g., XBTUSDTM). Optional - if not provided, returns stop orders for all symbols"
+        },
+        side: {
+          type: "string",
+          enum: ["buy", "sell"],
+          description: "Order side filter"
+        },
+        pageSize: {
+          type: "number",
+          description: "Number of results per page (default 50)",
+          minimum: 1,
+          maximum: 200,
+          default: 50
+        },
+        currentPage: {
+          type: "number",
+          description: "Page number for pagination (default 1)",
+          minimum: 1,
+          default: 1
+        }
+      }
     }
   },
   {
@@ -1286,6 +1326,24 @@ function validateOrThrow(schema: z.ZodTypeAny, toolName: string, args: any): voi
 // guarantees no order can reach KuCoin with an unvalidated size.
 const TRADER_OID_PREFIX = /^ta_/;
 
+// ---- Position-manager order constraints ----
+// Orders from the autonomous position manager (clientOid 'pm_*') may only
+// ever reduce risk: they must carry reduceOnly or closeOrder. Enforcing this
+// on the server makes the manager structurally unable to open or increase
+// exposure (same guarantee pattern as ta_* sizing). Accepts boolean true and
+// the string "true" because n8n HTTP nodes may serialize booleans as strings.
+const POSITION_MANAGER_OID_PREFIX = /^pm_/;
+const isTrueish = (v: unknown) => v === true || v === "true";
+
+function enforcePositionManagerReduceOnly(toolName: string, params: any): void {
+  if (typeof params.clientOid !== "string" || !POSITION_MANAGER_OID_PREFIX.test(params.clientOid)) return;
+  if (isTrueish(params.reduceOnly) || isTrueish(params.closeOrder)) return;
+  throw new Error(
+    `${toolName}: pm_* orders are restricted to risk reduction — set reduceOnly:true or closeOrder:true. ` +
+    `The position manager can never open or increase exposure.`
+  );
+}
+
 async function computePositionSize(
   client: KuCoinFuturesClient,
   args: { symbol?: string; riskPercentage?: any; leverage?: any; entryPrice?: any; currency?: string }
@@ -1453,6 +1511,7 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     // Order Management Tools
     case 'addOrder':
       validateOrThrow(addOrderSchema, 'addOrder', normalizedArgs);
+      enforcePositionManagerReduceOnly('addOrder', normalizedArgs);
       await applyServerSideSizing(client, 'addOrder', normalizedArgs);
       return await client.addOrder(normalizedArgs);
     case 'cancelOrder':
@@ -1485,11 +1544,19 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     // Advanced Order Management Tools
     case 'addStopOrder':
       validateOrThrow(addStopOrderSchema, 'addStopOrder', normalizedArgs);
+      enforcePositionManagerReduceOnly('addStopOrder', normalizedArgs);
       await applyServerSideSizing(client, 'addStopOrder', normalizedArgs);
       // clientOid is derived deterministically inside addStopOrder when absent
       return await client.addStopOrder(normalizedArgs);
     case 'getOpenOrders':
       return await client.getOpenOrders(normalizedArgs.symbol);
+    case 'getStopOrders':
+      return await client.getStopOrders(
+        normalizedArgs.symbol,
+        normalizedArgs.side,
+        normalizedArgs.pageSize || 50,
+        normalizedArgs.currentPage || 1
+      );
     case 'getPositionsHistory':
       return await client.getPositionsHistory(
         normalizedArgs.symbol,
