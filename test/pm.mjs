@@ -17,7 +17,14 @@ globalThis.fetch = async (url, init = {}) => {
   });
   if (u.includes("/api/v1/stopOrders")) {
     exchangeCalls.push({ url: u });
-    return ok({ currentPage: 1, pageSize: 50, totalNum: 1, items: [{ symbol: "XBTUSDTM", stop: "down", stopPrice: "61606.7" }] });
+    return ok({ currentPage: 1, pageSize: 50, totalNum: 1, items: [
+      { id: "STOP_SL_1", symbol: "XBTUSDTM", side: "sell", stop: "down", stopPrice: "61606.7", reduceOnly: true },
+      { id: "STOP_NONRO", symbol: "XBTUSDTM", side: "sell", stop: "down", stopPrice: "60000", reduceOnly: false },
+    ] });
+  }
+  if (init.method === "DELETE" && u.match(/\/api\/v1\/orders\/[^/?]+$/)) {
+    exchangeCalls.push({ url: u, method: "DELETE" });
+    return ok({ cancelledOrderIds: [u.split("/").pop()] });
   }
   if (u.includes("/api/v1/st-orders") || u.match(/\/api\/v1\/orders$/)) {
     exchangeCalls.push({ url: u, body: JSON.parse(init.body) });
@@ -101,7 +108,7 @@ check("T6 non-pm Order unbeeinflusst", r.body?.data?.orderId === "TEST_ORDER_ID"
 // T7: getStopOrders without args -> hits /api/v1/stopOrders with defaults
 exchangeCalls.length = 0;
 r = await call("getStopOrders", {});
-check("T7 getStopOrders liefert Items", r.body?.data?.items?.length === 1, r.body);
+check("T7 getStopOrders liefert Items", r.body?.data?.items?.length === 2, r.body);
 check("T7 Default-Pagination", exchangeCalls[0]?.url.includes("pageSize=50") && exchangeCalls[0]?.url.includes("currentPage=1"), exchangeCalls);
 
 // T8: getStopOrders with symbol+side -> params forwarded
@@ -109,6 +116,26 @@ exchangeCalls.length = 0;
 r = await call("getStopOrders", { symbol: "XBTUSDTM", side: "sell", pageSize: 10, currentPage: 2 });
 const u8 = exchangeCalls[0]?.url || "";
 check("T8 Filter-Params weitergereicht", u8.includes("symbol=XBTUSDTM") && u8.includes("side=sell") && u8.includes("pageSize=10") && u8.includes("currentPage=2"), u8);
+
+// T9: cancelStopOrder for a real untriggered reduceOnly stop -> verifies via
+// /stopOrders, then DELETEs /api/v1/orders/{id}
+exchangeCalls.length = 0;
+r = await call("cancelStopOrder", { orderId: "STOP_SL_1" });
+check("T9 cancelStopOrder akzeptiert gültigen Stop", JSON.stringify(r.body).includes("cancelledOrderIds"), r.body);
+check("T9 GET stopOrders zur Verifikation", exchangeCalls.some(c => c.url.includes("/api/v1/stopOrders")), exchangeCalls);
+check("T9 DELETE /orders/{id} ausgeführt", exchangeCalls.some(c => c.method === "DELETE" && c.url.endsWith("/api/v1/orders/STOP_SL_1")), exchangeCalls);
+
+// T10: cancelStopOrder for an orderId that is NOT an untriggered stop -> refused, no DELETE
+exchangeCalls.length = 0;
+r = await call("cancelStopOrder", { orderId: "NOT_A_STOP" });
+check("T10 unbekannte orderId abgelehnt", JSON.stringify(r.body).includes("not an untriggered stop order"), r.body);
+check("T10 kein DELETE-Call", !exchangeCalls.some(c => c.method === "DELETE"), exchangeCalls);
+
+// T11: cancelStopOrder for a non-reduceOnly stop -> refused, no DELETE
+exchangeCalls.length = 0;
+r = await call("cancelStopOrder", { orderId: "STOP_NONRO" });
+check("T11 non-reduceOnly Stop abgelehnt", JSON.stringify(r.body).includes("not reduceOnly"), r.body);
+check("T11 kein DELETE-Call", !exchangeCalls.some(c => c.method === "DELETE"), exchangeCalls);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);
