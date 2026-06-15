@@ -198,6 +198,36 @@ class KuCoinFuturesClient {
     return this.makeRequest("DELETE", `/api/v1/orders/${orderId}`);
   }
 
+  // Cancel a single untriggered stop order by its system orderId.
+  // KuCoin Futures cancels an order (including an untriggered stop) via
+  // DELETE /api/v1/orders/{orderId}; there is no per-id stop-only endpoint
+  // (only DELETE /api/v1/stopOrders cancels ALL stops, which would also drop
+  // the take-profit). To make this safe for the autonomous position manager,
+  // we first confirm the orderId really is an untriggered, risk-reducing stop
+  // (present in /stopOrders and not explicitly non-reduceOnly) and otherwise
+  // refuse — the manager can never cancel an entry order or a wrong order type.
+  async cancelStopOrder(orderId: string): Promise<any> {
+    if (!orderId || typeof orderId !== "string") {
+      throw new Error("cancelStopOrder: orderId is required");
+    }
+    const stopList = await this.getStopOrders(undefined, undefined, 200, 1);
+    const items = (stopList && stopList.data && stopList.data.items) || [];
+    const match = items.find((s: any) => String(s.id) === String(orderId));
+    if (!match) {
+      throw new Error(
+        `cancelStopOrder: orderId ${orderId} is not an untriggered stop order ` +
+        `(not found in /stopOrders). Refusing to cancel.`
+      );
+    }
+    if (match.reduceOnly === false || match.reduceOnly === "false") {
+      throw new Error(
+        `cancelStopOrder: stop order ${orderId} is not reduceOnly. ` +
+        `Refusing to cancel a non-protective stop.`
+      );
+    }
+    return this.makeRequest("DELETE", `/api/v1/orders/${orderId}`);
+  }
+
   async cancelAllOrders(symbol?: string): Promise<any> {
     const endpoint = symbol ? `/api/v1/orders?symbol=${symbol}` : "/api/v1/orders";
     return this.makeRequest("DELETE", endpoint);
@@ -569,6 +599,20 @@ const allTools = [
         orderId: {
           type: "string",
           description: "Order ID to cancel"
+        }
+      },
+      required: ["orderId"]
+    }
+  },
+  {
+    name: "cancelStopOrder",
+    description: "Cancel a single untriggered stop order by its system orderId (e.g. to move a stop-loss). Safety-checked: the server first confirms the orderId is an untriggered, risk-reducing stop in /stopOrders and refuses otherwise, so it can never cancel an entry or wrong order. Use the 'id' field from getStopOrders.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        orderId: {
+          type: "string",
+          description: "System orderId of the untriggered stop order to cancel (the 'id' field from getStopOrders)"
         }
       },
       required: ["orderId"]
@@ -1516,6 +1560,8 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
       return await client.addOrder(normalizedArgs);
     case 'cancelOrder':
       return await client.cancelOrder(normalizedArgs.orderId);
+    case 'cancelStopOrder':
+      return await client.cancelStopOrder(normalizedArgs.orderId);
     case 'cancelAllOrders':
       return await client.cancelAllOrders(normalizedArgs.symbol);
     case 'getOrders':
