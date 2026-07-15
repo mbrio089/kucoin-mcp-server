@@ -571,23 +571,7 @@ const allTools = [
           maxLength: 100
         }
       },
-      required: ["symbol", "side", "type", "marginMode", "positionSide"],
-      allOf: [
-        {
-          anyOf: [
-            { required: ["riskPercentage"] },
-            { required: ["size"] }
-          ]
-        },
-        {
-          if: { properties: { type: { const: "limit" } } },
-          then: { required: ["price"] }
-        },
-        {
-          if: { properties: { iceberg: { const: true } } },
-          then: { required: ["visibleSize"] }
-        }
-      ]
+      required: ["symbol", "side", "type", "marginMode", "positionSide"]
     }
   },
   {
@@ -902,31 +886,7 @@ const allTools = [
           description: "Position direction. Optional in one-way mode (defaults to BOTH). Required in hedge mode."
         }
       },
-      required: ["clientOid", "symbol", "side", "leverage", "stopPriceType"],
-      allOf: [
-        {
-          anyOf: [
-            { required: ["triggerStopUpPrice"] },
-            { required: ["triggerStopDownPrice"] }
-          ]
-        },
-        {
-          anyOf: [
-            { required: ["riskPercentage"] },
-            { required: ["size"] },
-            { required: ["qty"] },
-            { required: ["valueQty"] }
-          ]
-        },
-        {
-          if: { properties: { type: { const: "limit" } } },
-          then: { required: ["price"] }
-        },
-        {
-          if: { properties: { iceberg: { const: true } } },
-          then: { required: ["visibleSize"] }
-        }
-      ]
+      required: ["clientOid", "symbol", "side", "leverage", "stopPriceType"]
     }
   },
   {
