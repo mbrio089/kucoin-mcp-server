@@ -1348,6 +1348,70 @@ function enforcePositionManagerReduceOnly(toolName: string, params: any): void {
   );
 }
 
+// ---- One-way-mode netting guard ----
+// The account runs in one-way mode (positionSide BOTH): an order against an
+// open position does not open an independent position, it reduces or closes
+// the existing one. Trader orders (clientOid 'ta_*') are entries by contract —
+// closes are owned by the attached bracket stops and the position manager.
+// So a ta_* entry (not reduceOnly/closeOrder) is refused when it would act
+// against the symbol's open position or against a resting opposite-side ta_*
+// entry (both would net on fill). Explicit reduceOnly/closeOrder orders are
+// intentional closes and stay untouched, as do same-side adds and flat
+// symbols. Fail-closed: unreadable exchange state => refuse.
+async function enforceNoOppositeNetting(
+  client: KuCoinFuturesClient,
+  toolName: string,
+  params: any
+): Promise<void> {
+  if (typeof params.clientOid !== "string" || !TRADER_OID_PREFIX.test(params.clientOid)) return;
+  if (isTrueish(params.reduceOnly) || isTrueish(params.closeOrder)) return;
+  const refuse = (why: string) => {
+    throw new Error(
+      `${toolName}: NETTING_GUARD — ${why} Order refused, nothing was sent to the exchange. ` +
+      `Do not retry this opportunity and do not resubmit it as reduceOnly/closeOrder; skip it.`
+    );
+  };
+  const side = String(params.side ?? "").toLowerCase();
+  if (side !== "buy" && side !== "sell") refuse(`side must be 'buy' or 'sell' for a ta_* entry, got '${params.side}'.`);
+
+  let posResp: any, ordResp: any;
+  try {
+    [posResp, ordResp] = await Promise.all([
+      client.getPosition(params.symbol),
+      client.getOrders(params.symbol, "active", undefined, 100),
+    ]);
+  } catch (err: any) {
+    refuse(`could not read position/orders for ${params.symbol} (${err?.message ?? err}); fail-closed.`);
+  }
+  if (posResp?.code !== "200000" || ordResp?.code !== "200000") {
+    refuse(`exchange returned position code ${posResp?.code} / orders code ${ordResp?.code} for ${params.symbol}; fail-closed.`);
+  }
+
+  const positions = Array.isArray(posResp.data) ? posResp.data : posResp.data ? [posResp.data] : [];
+  const netQty = positions.reduce((sum: number, p: any) => sum + (Number(p?.currentQty) || 0), 0);
+  if ((side === "buy" && netQty < 0) || (side === "sell" && netQty > 0)) {
+    const held = netQty < 0 ? "SHORT" : "LONG";
+    refuse(
+      `${params.symbol} has an open ${held} position (currentQty ${netQty}) in one-way mode. ` +
+      `A ${side} entry would reduce or close it instead of opening an independent ${held === "SHORT" ? "LONG" : "SHORT"}.`
+    );
+  }
+
+  const opposite = ((ordResp.data && ordResp.data.items) || []).find((o: any) =>
+    o?.symbol === params.symbol &&
+    String(o?.side).toLowerCase() !== side &&
+    o?.isActive !== false &&
+    !isTrueish(o?.reduceOnly) && !isTrueish(o?.closeOrder) &&
+    typeof o?.clientOid === "string" && TRADER_OID_PREFIX.test(o.clientOid)
+  );
+  if (opposite) {
+    refuse(
+      `${params.symbol} has a resting opposite-side entry ${opposite.clientOid} (${opposite.side} ${opposite.size} @${opposite.price}); ` +
+      `both filling would net against each other in one-way mode.`
+    );
+  }
+}
+
 async function computePositionSize(
   client: KuCoinFuturesClient,
   args: { symbol?: string; riskPercentage?: any; leverage?: any; entryPrice?: any; currency?: string }
@@ -1516,6 +1580,7 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     case 'addOrder':
       validateOrThrow(addOrderSchema, 'addOrder', normalizedArgs);
       enforcePositionManagerReduceOnly('addOrder', normalizedArgs);
+      await enforceNoOppositeNetting(client, 'addOrder', normalizedArgs);
       await applyServerSideSizing(client, 'addOrder', normalizedArgs);
       return await client.addOrder(normalizedArgs);
     case 'cancelOrder':
@@ -1551,6 +1616,7 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     case 'addStopOrder':
       validateOrThrow(addStopOrderSchema, 'addStopOrder', normalizedArgs);
       enforcePositionManagerReduceOnly('addStopOrder', normalizedArgs);
+      await enforceNoOppositeNetting(client, 'addStopOrder', normalizedArgs);
       await applyServerSideSizing(client, 'addStopOrder', normalizedArgs);
       // clientOid is derived deterministically inside addStopOrder when absent
       return await client.addStopOrder(normalizedArgs);

@@ -27,6 +27,13 @@ globalThis.fetch = async (url, init = {}) => {
   if (u.includes("/api/v1/ticker")) {
     return ok({ symbol: "XBTUSDTM", price: TICKER_PRICE });
   }
+  // netting guard reads: flat symbol, no resting orders
+  if (u.includes("/api/v1/position?")) {
+    return ok({ symbol: "XBTUSDTM", currentQty: 0, isOpen: false });
+  }
+  if (u.includes("/api/v1/orders?") && u.includes("status=active")) {
+    return ok({ currentPage: 1, pageSize: 100, totalNum: 0, items: [] });
+  }
   if (u.includes("/api/v1/st-orders") || u.match(/\/api\/v1\/orders$/)) {
     orderCalls.push({ url: u, body: JSON.parse(init.body) });
     return ok({ orderId: "TEST_ORDER_ID", clientOid: JSON.parse(init.body).clientOid });
