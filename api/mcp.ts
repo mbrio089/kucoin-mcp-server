@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  type Role, BRAIN_OID_PREFIX, BrainGatewayError, readBrainLimits, computeBrainState,
+  riskBudgetReport, checkBrainEntry, enforceBrainRole,
+} from "../lib/brainGateway.ts";
 
 // Environment variables interface for Vercel
 interface Env {
@@ -7,6 +11,7 @@ interface Env {
   KUCOIN_API_PASSPHRASE: string;
   MCP_AUTH_KEY?: string;
   MCP_AUTH_KEYS?: string; // Comma-separated list of keys for multiple teams
+  MCP_BRAIN_KEY?: string; // Restricted key for the autonomous Hermes brain (role 'brain')
 }
 
 // Verbose logging (request lines, payloads, normalization) is opt-in via
@@ -1018,11 +1023,16 @@ const allTools = [
         }
       }
     }
+  },
+  {
+    name: "getRiskBudget",
+    description: "Risk gateway status for the autonomous brain: hard limits (set by the owner, not changeable via this server), current usage (open stop-risk, occupied symbols, today's and 7-day PnL, entries today), whether new hx_ entries are allowed right now and why not (blockers), per-position stop coverage, and the allowed symbol set. Call this before planning entries.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} }
   }
 ];
 
 // Optimized HTTP Streamable Transport Handler for n8n MCP nodes
-async function handleStreamableTransport(request: Request, env: Env): Promise<Response> {
+async function handleStreamableTransport(request: Request, env: Env, role: Role): Promise<Response> {
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type, Accept, Mcp-Session-Id, X-MCP-Auth-Key, Authorization',
@@ -1071,7 +1081,7 @@ async function handleStreamableTransport(request: Request, env: Env): Promise<Re
         );
         
         try {
-          const result = await executeToolCall(client, body.params.name, body.params.arguments);
+          const result = await executeToolCall(client, body.params.name, body.params.arguments, role);
 
           // Check for format query parameter
           const url = new URL(request.url);
@@ -1205,11 +1215,11 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 // Authentication helper function
-function authenticateRequest(request: Request, env: Env): { isAuthenticated: boolean; error?: string } {
+function authenticateRequest(request: Request, env: Env): { isAuthenticated: boolean; role?: Role; error?: string } {
   // Fail closed: if no auth keys are configured, deny all access.
   // This server can place/cancel real-money orders, so a missing or unset
   // MCP_AUTH_KEY must never silently expose it to the public internet.
-  if (!env.MCP_AUTH_KEY && !env.MCP_AUTH_KEYS) {
+  if (!env.MCP_AUTH_KEY && !env.MCP_AUTH_KEYS && !env.MCP_BRAIN_KEY) {
     console.error('Authentication denied: no MCP_AUTH_KEY/MCP_AUTH_KEYS configured (server misconfiguration)');
     return {
       isAuthenticated: false,
@@ -1235,10 +1245,14 @@ function authenticateRequest(request: Request, env: Env): { isAuthenticated: boo
   if (env.MCP_AUTH_KEYS) validKeys.push(...env.MCP_AUTH_KEYS.split(',').map(k => k.trim()));
 
   const isValid = validKeys.some(key => timingSafeEqual(key, authHeader));
-  
+  const isBrain = !!env.MCP_BRAIN_KEY && timingSafeEqual(env.MCP_BRAIN_KEY, authHeader);
+
   if (isValid) {
     debugLog('Authentication successful');
-    return { isAuthenticated: true };
+    return { isAuthenticated: true, role: "admin" };
+  } else if (isBrain) {
+    debugLog('Authentication successful (brain)');
+    return { isAuthenticated: true, role: "brain" };
   } else {
     console.warn('Authentication failed: Invalid auth key');
     return {
@@ -1358,12 +1372,14 @@ function enforcePositionManagerReduceOnly(toolName: string, params: any): void {
 // entry (both would net on fill). Explicit reduceOnly/closeOrder orders are
 // intentional closes and stay untouched, as do same-side adds and flat
 // symbols. Fail-closed: unreadable exchange state => refuse.
+const ENTRY_OID_PREFIX = /^(ta|hx)_/;
+
 async function enforceNoOppositeNetting(
   client: KuCoinFuturesClient,
   toolName: string,
   params: any
 ): Promise<void> {
-  if (typeof params.clientOid !== "string" || !TRADER_OID_PREFIX.test(params.clientOid)) return;
+  if (typeof params.clientOid !== "string" || !ENTRY_OID_PREFIX.test(params.clientOid)) return;
   if (isTrueish(params.reduceOnly) || isTrueish(params.closeOrder)) return;
   const refuse = (why: string) => {
     throw new Error(
@@ -1372,7 +1388,7 @@ async function enforceNoOppositeNetting(
     );
   };
   const side = String(params.side ?? "").toLowerCase();
-  if (side !== "buy" && side !== "sell") refuse(`side must be 'buy' or 'sell' for a ta_* entry, got '${params.side}'.`);
+  if (side !== "buy" && side !== "sell") refuse(`side must be 'buy' or 'sell' for a ta_*/hx_* entry, got '${params.side}'.`);
 
   let posResp: any, ordResp: any;
   try {
@@ -1402,7 +1418,7 @@ async function enforceNoOppositeNetting(
     String(o?.side).toLowerCase() !== side &&
     o?.isActive !== false &&
     !isTrueish(o?.reduceOnly) && !isTrueish(o?.closeOrder) &&
-    typeof o?.clientOid === "string" && TRADER_OID_PREFIX.test(o.clientOid)
+    typeof o?.clientOid === "string" && ENTRY_OID_PREFIX.test(o.clientOid)
   );
   if (opposite) {
     refuse(
@@ -1558,10 +1574,19 @@ function formatToolCallSuccess(
 }
 
 // Helper function to execute tool calls
-async function executeToolCall(client: KuCoinFuturesClient, name: string, args: any) {
+const isBrainEntry = (p: any) =>
+  typeof p?.clientOid === "string" && BRAIN_OID_PREFIX.test(p.clientOid) && !isTrueish(p.reduceOnly) && !isTrueish(p.closeOrder);
+
+async function executeToolCall(client: KuCoinFuturesClient, name: string, args: any, role: Role = "admin") {
   // Normalize parameters from different MCP client formats
-  const normalizedArgs = normalizeParameters(args);
+  const normalizedArgs = normalizeParameters(args) ?? {};
+  if (role === "brain") {
+    await enforceBrainRole(client, name, normalizedArgs);
+  }
+  const limits = readBrainLimits(process.env as Record<string, string | undefined>);
   switch (name) {
+    case 'getRiskBudget':
+      return riskBudgetReport(await computeBrainState(client, limits), limits);
     // Market Data Tools
     case 'getSymbols':
       return await client.getSymbols();
@@ -1580,6 +1605,7 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     case 'addOrder':
       validateOrThrow(addOrderSchema, 'addOrder', normalizedArgs);
       enforcePositionManagerReduceOnly('addOrder', normalizedArgs);
+      if (isBrainEntry(normalizedArgs)) await checkBrainEntry(client, 'addOrder', normalizedArgs, limits);
       await enforceNoOppositeNetting(client, 'addOrder', normalizedArgs);
       await applyServerSideSizing(client, 'addOrder', normalizedArgs);
       return await client.addOrder(normalizedArgs);
@@ -1616,6 +1642,12 @@ async function executeToolCall(client: KuCoinFuturesClient, name: string, args: 
     case 'addStopOrder':
       validateOrThrow(addStopOrderSchema, 'addStopOrder', normalizedArgs);
       enforcePositionManagerReduceOnly('addStopOrder', normalizedArgs);
+      if (isBrainEntry(normalizedArgs)) {
+        await enforceNoOppositeNetting(client, 'addStopOrder', normalizedArgs);
+        const sizing = await checkBrainEntry(client, 'addStopOrder', normalizedArgs, limits);
+        const placed = await client.addStopOrder(normalizedArgs);
+        return placed && typeof placed === "object" ? { ...placed, brainGateway: sizing } : placed;
+      }
       await enforceNoOppositeNetting(client, 'addStopOrder', normalizedArgs);
       await applyServerSideSizing(client, 'addStopOrder', normalizedArgs);
       // clientOid is derived deterministically inside addStopOrder when absent
@@ -1694,7 +1726,7 @@ export default async function handler(request: Request) {
   
   // Handle /stream endpoint for n8n compatibility (optimized)
   if (url.pathname === '/stream') {
-    return handleStreamableTransport(request, env);
+    return handleStreamableTransport(request, env, authResult.role ?? "admin");
   }
   
   // Main /mcp endpoint for Claude Desktop
@@ -1752,6 +1784,7 @@ export default async function handler(request: Request) {
 
       // Handle tools/call
       if (body.method === 'tools/call') {
+        const role: Role = authResult.role ?? "admin";
         // Initialize KuCoin client
         const client = new KuCoinFuturesClient(
           env.KUCOIN_API_KEY,
@@ -1761,7 +1794,7 @@ export default async function handler(request: Request) {
         
         try {
           // Execute the requested tool using helper function (same as /stream endpoint)
-          const result = await executeToolCall(client, body.params.name, body.params.arguments);
+          const result = await executeToolCall(client, body.params.name, body.params.arguments, role);
 
           // Check for format query parameter
           const url = new URL(request.url);

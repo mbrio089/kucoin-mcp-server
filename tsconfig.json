@@ -19,6 +19,8 @@
         ],
         /* Enable importing .json files */
         "resolveJsonModule": true,
+        /* Allow explicit .ts import paths (node --experimental-strip-types test runner; Vercel bundles them). */
+        "allowImportingTsExtensions": true,
 
         /* Allow JavaScript files to be a part of your program. Use the `checkJS` option to get errors from these files. */
         "allowJs": true,
