@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   type Role, BRAIN_OID_PREFIX, BrainGatewayError, readBrainLimits, computeBrainState,
   riskBudgetReport, checkBrainEntry, enforceBrainRole,
-} from "../lib/brainGateway.ts";
+} from "../lib/brainGateway";
 
 // Environment variables interface for Vercel
 interface Env {

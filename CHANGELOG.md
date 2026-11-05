@@ -7,7 +7,7 @@
 - Limits are Vercel env vars with defaults: `BRAIN_RISK_PCT_MAX` 1.5, `BRAIN_EXPERIMENT_RISK_PCT_MAX` 0.75, `BRAIN_MAX_EXPERIMENTS` 1, `BRAIN_OPEN_RISK_PCT_MAX` 5, `BRAIN_MAX_POSITIONS` 5, `BRAIN_DAILY_LOSS_PCT` 4, `BRAIN_WEEKLY_LOSS_PCT` 10, `BRAIN_EQUITY_FLOOR_USDT` 300, `BRAIN_MAX_LEVERAGE` 5, `BRAIN_MIN_STOP_PCT` 0.4, `BRAIN_MAX_STOP_PCT` 6, `BRAIN_MAX_ENTRIES_PER_DAY` 8, `BRAIN_TOP_SYMBOLS` 20, `BRAIN_MIN_TURNOVER_USDT` 20000000, optional `BRAIN_SYMBOL_ALLOWLIST`.
 - New tool `getRiskBudget` (limits, usage, blockers, stop coverage per position, allowed symbols).
 - The one-way netting guard now covers `hx_` entries as well as `ta_`.
-- Legacy `ta_`/`pm_` behaviour with the admin key is unchanged. Tests: `test/brain.mjs`.
+- Legacy `ta_`/`pm_` behaviour with the admin key is unchanged. Tests: `node --experimental-strip-types --import ./test/ts-resolve.mjs test/brain.mjs` (same for the other test files).
 
 ## Version 2.1.0 - New Trading Analysis Tools (2025-09-12)
 
