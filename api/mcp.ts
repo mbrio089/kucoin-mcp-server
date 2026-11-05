@@ -1108,7 +1108,7 @@ async function handleStreamableTransport(request: Request, env: Env, role: Role)
         const pingResponse = {
           jsonrpc: "2.0",
           id: body.id,
-          result: "pong"
+          result: {} // MCP spec: ping returns an empty result object (a string breaks client keepalives)
         };
         return new Response(JSON.stringify(pingResponse), {
           headers: { ...headers, 'Content-Type': 'application/json' }
@@ -1769,7 +1769,7 @@ export default async function handler(request: Request) {
         return new Response(JSON.stringify({
           jsonrpc: "2.0", 
           id: body.id,
-          result: "pong"
+          result: {} // MCP spec: ping returns an empty result object (a string breaks client keepalives)
         }), { headers });
       }
 
